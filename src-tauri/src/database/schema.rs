@@ -133,6 +133,7 @@ impl Database {
             circuit_min_requests INTEGER NOT NULL DEFAULT 10,
             default_cost_multiplier TEXT NOT NULL DEFAULT '1',
             pricing_model_source TEXT NOT NULL DEFAULT 'response',
+            service_token TEXT,
             created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         )", []).map_err(|e| AppError::Database(e.to_string()))?;
 
@@ -333,6 +334,9 @@ impl Database {
             Self::migrate_proxy_config_to_per_app(conn)?;
         }
 
+        // 对外 API 服务入站 token（为空时不校验）
+        Self::add_column_if_missing(conn, "proxy_config", "service_token", "TEXT")?;
+
         // 确保 in_failover_queue 列存在（对于已存在的 v2 数据库）
         Self::add_column_if_missing(
             conn,
@@ -430,6 +434,11 @@ impl Database {
                         log::info!("迁移数据库从 v9 到 v10（添加 Hermes Agent 支持）");
                         Self::migrate_v9_to_v10(conn)?;
                         Self::set_user_version(conn, 10)?;
+                    }
+                    10 => {
+                        log::info!("迁移数据库从 v10 到 v11（添加代理服务入站 token）");
+                        Self::migrate_v10_to_v11(conn)?;
+                        Self::set_user_version(conn, 11)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1197,6 +1206,12 @@ impl Database {
         }
 
         log::info!("v9 -> v10 迁移完成：已添加 Hermes Agent 支持");
+        Ok(())
+    }
+
+    fn migrate_v10_to_v11(conn: &Connection) -> Result<(), AppError> {
+        Self::add_column_if_missing(conn, "proxy_config", "service_token", "TEXT")?;
+        log::info!("v10 -> v11 迁移完成：已添加代理服务入站 token");
         Ok(())
     }
 

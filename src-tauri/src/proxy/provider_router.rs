@@ -5,12 +5,34 @@
 use crate::app_config::AppType;
 use crate::database::Database;
 use crate::error::AppError;
-use crate::provider::Provider;
+use crate::provider::{Provider, ProviderMeta};
 use crate::proxy::circuit_breaker::{AllowResult, CircuitBreaker, CircuitBreakerConfig};
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+
+fn compare_codex_oauth_provider(a: &Provider, b: &Provider) -> std::cmp::Ordering {
+    let a_has_binding = has_codex_oauth_binding(a);
+    let b_has_binding = has_codex_oauth_binding(b);
+
+    a_has_binding
+        .cmp(&b_has_binding)
+        .then_with(|| {
+            a.created_at
+                .unwrap_or_default()
+                .cmp(&b.created_at.unwrap_or_default())
+        })
+        .then_with(|| b.id.cmp(&a.id))
+}
+
+fn has_codex_oauth_binding(provider: &Provider) -> bool {
+    provider
+        .meta
+        .as_ref()
+        .and_then(|meta: &ProviderMeta| meta.managed_account_id_for("codex_oauth"))
+        .is_some()
+}
 
 /// 供应商路由器
 pub struct ProviderRouter {
@@ -35,6 +57,12 @@ impl ProviderRouter {
     /// - 故障转移关闭时：仅返回当前供应商
     /// - 故障转移开启时：仅使用故障转移队列，按队列顺序依次尝试（P1 → P2 → ...）
     pub async fn select_providers(&self, app_type: &str) -> Result<Vec<Provider>, AppError> {
+        if app_type == "codex" {
+            if let Some(provider) = self.select_claude_codex_oauth_provider()? {
+                return Ok(vec![provider]);
+            }
+        }
+
         let mut result = Vec::new();
         let mut total_providers = 0usize;
         let mut circuit_open_count = 0usize;
@@ -106,6 +134,30 @@ impl ProviderRouter {
         }
 
         Ok(result)
+    }
+
+    fn select_claude_codex_oauth_provider(&self) -> Result<Option<Provider>, AppError> {
+        let providers = self.db.get_all_providers("claude")?;
+
+        let current_id =
+            crate::settings::get_effective_current_provider(&self.db, &AppType::Claude)
+                .ok()
+                .flatten()
+                .or_else(|| self.db.get_current_provider("claude").ok().flatten());
+
+        if let Some(current_id) = current_id {
+            if let Some(provider) = providers.get(&current_id) {
+                if provider.is_codex_oauth() {
+                    return Ok(Some(provider.clone()));
+                }
+            }
+        }
+
+        Ok(providers
+            .values()
+            .filter(|provider| provider.is_codex_oauth())
+            .max_by(|a, b| compare_codex_oauth_provider(a, b))
+            .cloned())
     }
 
     /// 请求执行前获取熔断器“放行许可”

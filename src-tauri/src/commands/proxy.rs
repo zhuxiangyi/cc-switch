@@ -107,7 +107,10 @@ pub async fn update_global_proxy_config(
     let db = &state.db;
     db.update_global_proxy_config(config)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+
+    let proxy_config = db.get_proxy_config().await.map_err(|e| e.to_string())?;
+    state.proxy_service.update_config(&proxy_config).await
 }
 
 /// 获取指定应用的代理配置

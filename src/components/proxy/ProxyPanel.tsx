@@ -9,6 +9,7 @@ import {
   Loader2,
   Zap,
   Power,
+  KeyRound,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -57,12 +58,14 @@ export function ProxyPanel({
   // 监听地址/端口的本地状态（端口用字符串以支持完全清空）
   const [listenAddress, setListenAddress] = useState("127.0.0.1");
   const [listenPort, setListenPort] = useState("15721");
+  const [serviceToken, setServiceToken] = useState("");
 
   // 同步全局配置到本地状态
   useEffect(() => {
     if (globalConfig) {
       setListenAddress(globalConfig.listenAddress);
       setListenPort(String(globalConfig.listenPort));
+      setServiceToken(globalConfig.serviceToken ?? "");
     }
   }, [globalConfig]);
 
@@ -164,6 +167,7 @@ export function ProxyPanel({
         ...globalConfig,
         listenAddress: addressTrimmed,
         listenPort: port,
+        serviceToken: serviceToken.trim() || null,
       });
       toast.success(
         t("proxy.settings.configSaved", { defaultValue: "代理配置已保存" }),
@@ -513,7 +517,7 @@ export function ProxyPanel({
                   <p className="text-xs text-muted-foreground">
                     {t("proxy.settings.fields.listenAddress.description", {
                       defaultValue:
-                        "代理服务器监听的 IP 地址（推荐 127.0.0.1）",
+                        "代理服务器监听的 IP 地址；对外提供服务可填 0.0.0.0",
                     })}
                   </p>
                 </div>
@@ -542,6 +546,33 @@ export function ProxyPanel({
                     })}
                   </p>
                 </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="service-token" className="flex items-center gap-2">
+                  <KeyRound className="h-3.5 w-3.5" />
+                  {t("proxy.settings.fields.serviceToken.label", {
+                    defaultValue: "API 服务 Token",
+                  })}
+                </Label>
+                <Input
+                  id="service-token"
+                  type="password"
+                  value={serviceToken}
+                  onChange={(e) => setServiceToken(e.target.value)}
+                  placeholder={t(
+                    "proxy.settings.fields.serviceToken.placeholder",
+                    {
+                      defaultValue: "留空则不校验 Authorization Bearer token",
+                    },
+                  )}
+                />
+                <p className="text-xs text-muted-foreground">
+                  {t("proxy.settings.fields.serviceToken.description", {
+                    defaultValue:
+                      "设置后，除 /health 和 /status 外的代理 API 请求必须携带 Authorization: Bearer <token>。",
+                  })}
+                </p>
               </div>
 
               <div className="flex justify-end">

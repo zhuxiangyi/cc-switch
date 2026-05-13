@@ -85,6 +85,10 @@ impl ProviderAdapter for CodexAdapter {
     }
 
     fn extract_base_url(&self, provider: &Provider) -> Result<String, ProxyError> {
+        if provider.is_codex_oauth() {
+            return Ok("https://chatgpt.com/backend-api/codex".to_string());
+        }
+
         // 1. 尝试直接获取 base_url 字段
         if let Some(url) = provider
             .settings_config
@@ -132,11 +136,26 @@ impl ProviderAdapter for CodexAdapter {
     }
 
     fn extract_auth(&self, provider: &Provider) -> Option<AuthInfo> {
+        if provider.is_codex_oauth() {
+            return Some(AuthInfo::new(
+                "codex_oauth_placeholder".to_string(),
+                AuthStrategy::CodexOAuth,
+            ));
+        }
+
         self.extract_key(provider)
             .map(|key| AuthInfo::new(key, AuthStrategy::Bearer))
     }
 
     fn build_url(&self, base_url: &str, endpoint: &str) -> String {
+        if base_url == "https://chatgpt.com/backend-api/codex" {
+            return format!(
+                "{}/{}",
+                base_url.trim_end_matches('/'),
+                endpoint.trim_start_matches('/')
+            );
+        }
+
         let base_trimmed = base_url.trim_end_matches('/');
         let endpoint_trimmed = endpoint.trim_start_matches('/');
 
@@ -175,10 +194,22 @@ impl ProviderAdapter for CodexAdapter {
 
     fn get_auth_headers(&self, auth: &AuthInfo) -> Vec<(http::HeaderName, http::HeaderValue)> {
         let bearer = format!("Bearer {}", auth.api_key);
-        vec![(
-            http::HeaderName::from_static("authorization"),
-            http::HeaderValue::from_str(&bearer).unwrap(),
-        )]
+        match auth.strategy {
+            AuthStrategy::CodexOAuth => vec![
+                (
+                    http::HeaderName::from_static("authorization"),
+                    http::HeaderValue::from_str(&bearer).unwrap(),
+                ),
+                (
+                    http::HeaderName::from_static("originator"),
+                    http::HeaderValue::from_static("cc-switch"),
+                ),
+            ],
+            _ => vec![(
+                http::HeaderName::from_static("authorization"),
+                http::HeaderValue::from_str(&bearer).unwrap(),
+            )],
+        }
     }
 }
 

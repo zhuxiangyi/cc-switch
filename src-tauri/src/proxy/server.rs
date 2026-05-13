@@ -14,8 +14,12 @@ use super::{
     ProxyError,
 };
 use crate::database::Database;
+use axum::body::Body;
 use axum::{
-    extract::DefaultBodyLimit,
+    extract::{DefaultBodyLimit, State},
+    http::{header, Request, StatusCode},
+    middleware::{self, Next},
+    response::Response,
     routing::{get, post},
     Router,
 };
@@ -278,10 +282,7 @@ impl ProxyServer {
     }
 
     fn build_router(&self) -> Router {
-        Router::new()
-            // 健康检查
-            .route("/health", get(handlers::health_check))
-            .route("/status", get(handlers::get_status))
+        let protected_routes = Router::new()
             // Claude API (支持带前缀和不带前缀两种格式)
             .route("/v1/messages", post(handlers::handle_messages))
             .route("/claude/v1/messages", post(handlers::handle_messages))
@@ -333,6 +334,16 @@ impl ProxyServer {
             // Gemini API (支持带前缀和不带前缀)
             .route("/v1beta/*path", post(handlers::handle_gemini))
             .route("/gemini/v1beta/*path", post(handlers::handle_gemini))
+            .route_layer(middleware::from_fn_with_state(
+                self.state.clone(),
+                require_service_token,
+            ));
+
+        Router::new()
+            // 健康检查
+            .route("/health", get(handlers::health_check))
+            .route("/status", get(handlers::get_status))
+            .merge(protected_routes)
             // 提高默认请求体大小限制（避免 413 Payload Too Large）
             .layer(DefaultBodyLimit::max(200 * 1024 * 1024))
             .with_state(self.state.clone())
@@ -359,5 +370,39 @@ impl ProxyServer {
             .provider_router
             .reset_provider_breaker(provider_id, app_type)
             .await;
+    }
+}
+
+async fn require_service_token(
+    State(state): State<ProxyState>,
+    request: Request<Body>,
+    next: Next,
+) -> Result<Response, StatusCode> {
+    let configured_token = {
+        let config = state.config.read().await;
+        config
+            .service_token
+            .as_deref()
+            .map(str::trim)
+            .filter(|token| !token.is_empty())
+            .map(ToString::to_string)
+    };
+
+    let Some(configured_token) = configured_token else {
+        return Ok(next.run(request).await);
+    };
+
+    let authorized = request
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .map(str::trim)
+        .is_some_and(|token| token == configured_token);
+
+    if authorized {
+        Ok(next.run(request).await)
+    } else {
+        Err(StatusCode::UNAUTHORIZED)
     }
 }
