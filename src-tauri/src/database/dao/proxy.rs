@@ -52,6 +52,11 @@ pub(crate) fn validate_pricing_source(value: &str) -> Result<&str, AppError> {
     }
 }
 
+fn normalize_service_token(token: String) -> Option<String> {
+    let trimmed = token.trim().to_string();
+    (!trimmed.is_empty()).then_some(trimmed)
+}
+
 impl Database {
     // ==================== Global Proxy Config ====================
 
@@ -63,7 +68,7 @@ impl Database {
         let result = {
             let conn = lock_conn!(self.conn);
             conn.query_row(
-                "SELECT proxy_enabled, listen_address, listen_port, enable_logging
+                "SELECT proxy_enabled, listen_address, listen_port, enable_logging, service_token
                  FROM proxy_config WHERE app_type = 'claude'",
                 [],
                 |row| {
@@ -72,6 +77,7 @@ impl Database {
                         listen_address: row.get(1)?,
                         listen_port: row.get::<_, i32>(2)? as u16,
                         enable_logging: row.get::<_, i32>(3)? != 0,
+                        service_token: row.get(4)?,
                     })
                 },
             )
@@ -88,6 +94,7 @@ impl Database {
                     listen_address: "127.0.0.1".to_string(),
                     listen_port: 15721,
                     enable_logging: true,
+                    service_token: None,
                 })
             }
             Err(e) => Err(AppError::Database(e.to_string())),
@@ -107,12 +114,14 @@ impl Database {
                 listen_address = ?2,
                 listen_port = ?3,
                 enable_logging = ?4,
+                service_token = ?5,
                 updated_at = datetime('now')",
             rusqlite::params![
                 if config.proxy_enabled { 1 } else { 0 },
                 config.listen_address,
                 config.listen_port as i32,
                 if config.enable_logging { 1 } else { 0 },
+                config.service_token.and_then(normalize_service_token),
             ],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
@@ -411,7 +420,8 @@ impl Database {
             conn.query_row(
                 "SELECT listen_address, listen_port, max_retries,
                         enable_logging,
-                        streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout
+                        streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
+                        service_token
                  FROM proxy_config WHERE app_type = 'claude'",
                 [],
                 |row| {
@@ -425,6 +435,7 @@ impl Database {
                         streaming_first_byte_timeout: row.get::<_, i32>(4).unwrap_or(60) as u64,
                         streaming_idle_timeout: row.get::<_, i32>(5).unwrap_or(120) as u64,
                         non_streaming_timeout: row.get::<_, i32>(6).unwrap_or(600) as u64,
+                        service_token: row.get(7)?,
                     })
                 },
             )
@@ -456,6 +467,7 @@ impl Database {
                 streaming_first_byte_timeout = ?5,
                 streaming_idle_timeout = ?6,
                 non_streaming_timeout = ?7,
+                service_token = ?8,
                 updated_at = datetime('now')",
             rusqlite::params![
                 config.listen_address,
@@ -465,6 +477,7 @@ impl Database {
                 config.streaming_first_byte_timeout as i32,
                 config.streaming_idle_timeout as i32,
                 config.non_streaming_timeout as i32,
+                config.service_token.and_then(normalize_service_token),
             ],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;

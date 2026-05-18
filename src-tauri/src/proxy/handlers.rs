@@ -796,11 +796,21 @@ fn responses_sse_to_response_value(body: &str) -> Result<Value, ProxyError> {
                 completed_response = Some(data.get("response").cloned().unwrap_or(data));
             }
             "response.failed" => {
-                let message = data
-                    .pointer("/response/error/message")
+                let response_error = data.pointer("/response/error");
+                let message = response_error
+                    .and_then(|v| v.get("message"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("response.failed event received");
-                return Err(ProxyError::TransformError(message.to_string()));
+                let body = serde_json::json!({
+                    "error": response_error.cloned().unwrap_or_else(|| serde_json::json!({
+                        "message": message,
+                        "type": "upstream_error"
+                    }))
+                });
+                return Err(ProxyError::UpstreamError {
+                    status: 502,
+                    body: Some(body.to_string()),
+                });
             }
             _ => {}
         }
